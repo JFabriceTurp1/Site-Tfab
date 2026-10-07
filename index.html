@@ -76,6 +76,14 @@ h2{margin:0;font-size:clamp(28px,4vw,42px);line-height:1.05;letter-spacing:-.035
 .toast{position:fixed;bottom:24px;right:24px;padding:12px 15px;border-radius:13px;background:#111827;color:#fff;box-shadow:var(--shadow);font-size:13px;opacity:0;transform:translateY(10px);pointer-events:none;transition:.2s ease;z-index:70}
 .toast.show{opacity:1;transform:translateY(0)}
 
+
+.firebase-state{display:inline-flex;align-items:center;gap:7px;border:1px solid var(--line);background:#fff;border-radius:999px;padding:8px 11px;font-size:12px;font-weight:800;color:#475569}
+.firebase-dot{width:9px;height:9px;border-radius:50%;background:#94a3b8;box-shadow:0 0 0 3px #f1f5f9}
+.firebase-state.ok .firebase-dot{background:#10b981;box-shadow:0 0 0 3px #d1fae5}
+.firebase-state.sync .firebase-dot{background:#f59e0b;box-shadow:0 0 0 3px #fef3c7}
+.firebase-state.err .firebase-dot{background:#ef4444;box-shadow:0 0 0 3px #fee2e2}
+.firebase-box{display:flex;align-items:center;justify-content:space-between;gap:14px;flex-wrap:wrap;padding:14px 16px;border:1px solid var(--line);border-radius:14px;background:#f8fafc;margin-bottom:16px}
+.firebase-box .smalltext{font-size:12px;color:var(--muted);line-height:1.45}
 /* login */
 .login-screen{position:fixed;inset:0;z-index:100;background:radial-gradient(circle at 70% 20%,#1d4ed855,transparent 35%),linear-gradient(135deg,#0f172a,#172554);display:grid;place-items:center;padding:20px}
 .login-card{width:min(430px,100%);background:#fff;border-radius:26px;padding:28px;box-shadow:0 25px 80px rgba(0,0,0,.35)}
@@ -181,6 +189,7 @@ input[type=file]{max-width:100%}
           <p class="sub" id="welcomeSubtitle">Retrouve tous tes outils depuis une seule page.</p>
         </div>
         <div class="top-actions">
+          <span id="firebaseStateHome" class="firebase-state"><span class="firebase-dot"></span><span>Firebase : initialisation</span></span>
           <button class="btn" onclick="openSettings()">⚙ Paramètres</button>
           <button class="btn" onclick="logout()">🔒 Verrouiller</button>
         </div>
@@ -235,6 +244,22 @@ input[type=file]{max-width:100%}
 
       <div class="settings-wrap">
         <div class="panel">
+          <h3>Synchronisation Firebase</h3>
+          <p class="muted">Le portail utilise un seul document Firestore afin de limiter au maximum les lectures et écritures.</p>
+          <div class="firebase-box">
+            <div>
+              <div id="firebaseStateSettings" class="firebase-state"><span class="firebase-dot"></span><span>Firebase : initialisation</span></div>
+              <div class="smalltext" style="margin-top:8px">Projet : <strong>site-tfab</strong> · Document : <strong>portails/atelier</strong></div>
+            </div>
+            <div class="top-actions">
+              <button class="btn" onclick="reloadFromFirebase()">↻ Recharger depuis Firebase</button>
+              <button class="btn primary" onclick="syncToFirebase(true)">☁ Synchroniser maintenant</button>
+            </div>
+          </div>
+          <div id="firebaseDetail" class="admin-note">La configuration locale reste disponible si Firebase est momentanément inaccessible.</div>
+        </div>
+
+        <div class="panel">
           <h3>Présentation du portail</h3>
           <p class="muted">Ces informations sont affichées sur la page d'accueil.</p>
           <div class="form-grid">
@@ -279,7 +304,7 @@ input[type=file]{max-width:100%}
 
         <div class="panel">
           <h3>Code d'accès</h3>
-          <p class="muted">Change le code demandé à l'ouverture du portail.</p>
+          <p class="muted">Change le code demandé à l'ouverture du portail. Le nouveau code est synchronisé avec Firebase pour être identique sur tes appareils.</p>
           <div class="form-grid">
             <div class="field">
               <label>Code actuel</label>
@@ -382,6 +407,28 @@ input[type=file]{max-width:100%}
 
 <script>
 const DEFAULT_CODE_HASH = "a2e103fe9e3f70e2d2caced8421bc3e90020051b8f1ec48cffd633e338bdb3d4";
+
+// Firebase fourni pour le portail. Analytics n'est volontairement pas initialisé afin de réduire les appels réseau.
+const FIREBASE_CONFIG = {
+  apiKey: "AIzaSyANWFmBc0aBbisVTaLmlizoJI8qc46B1mo",
+  authDomain: "site-tfab.firebaseapp.com",
+  projectId: "site-tfab",
+  storageBucket: "site-tfab.firebasestorage.app",
+  messagingSenderId: "804495487367",
+  appId: "1:804495487367:web:243ca6ae9085df9b3de322",
+  measurementId: "G-SQ4X5X2Z2W"
+};
+const FIRESTORE_COLLECTION = "portails";
+const FIRESTORE_DOCUMENT = "atelier";
+const FIREBASE_SDK_VERSION = "12.19.0";
+let fb = null;
+let firebaseInitPromise = null;
+let firebaseSaveTimer = null;
+let firebaseBusy = false;
+let cloudCodeHash = null;
+let lastCloudUpdatedAt = null;
+let cloudLoadedOnce = false;
+
 const DEFAULT_APPS = [
   {id:"evaluation",name:"Évaluation · Charge Atelier",category:"evaluation",description:"Application principale pour gérer l’atelier du jour, les évaluations, les historiques et les synthèses élèves.",icon:"📊",status:"stable",version:"V221",color:"#2563eb",url:"",enabled:true},
   {id:"editeur-tp",name:"Éditeur de TP",category:"tp",description:"Création, mise en page et préparation des TP avec photothèque, critères et blocs interactifs.",icon:"🧩",status:"stable",version:"V55",color:"#7c3aed",url:"",enabled:true},
@@ -425,12 +472,141 @@ async function sha256(text){
 }
 
 function currentCodeHash(){
-  return localStorage.getItem("portalCodeHash") || DEFAULT_CODE_HASH;
+  return cloudCodeHash || localStorage.getItem("portalCodeHash") || DEFAULT_CODE_HASH;
+}
+
+function setFirebaseState(state, label, detail=""){
+  ["firebaseStateHome","firebaseStateSettings"].forEach(id=>{
+    const el=document.getElementById(id); if(!el) return;
+    el.className="firebase-state"+(state?" "+state:"");
+    const text=el.querySelector("span:last-child"); if(text) text.textContent=label;
+  });
+  const d=document.getElementById("firebaseDetail");
+  if(d && detail) d.textContent=detail;
+}
+
+async function ensureFirebase(){
+  if(fb) return fb;
+  if(firebaseInitPromise) return firebaseInitPromise;
+  firebaseInitPromise=(async()=>{
+    try{
+      setFirebaseState("sync","Firebase : connexion…","Chargement du SDK Firebase et connexion à Firestore…");
+      const appMod=await import(`https://www.gstatic.com/firebasejs/${FIREBASE_SDK_VERSION}/firebase-app.js`);
+      const fsMod=await import(`https://www.gstatic.com/firebasejs/${FIREBASE_SDK_VERSION}/firebase-firestore.js`);
+      const firebaseApp=appMod.initializeApp(FIREBASE_CONFIG);
+      const db=fsMod.getFirestore(firebaseApp);
+      fb={db,doc:fsMod.doc,getDoc:fsMod.getDoc,setDoc:fsMod.setDoc,serverTimestamp:fsMod.serverTimestamp};
+      setFirebaseState("ok","Firebase : connecté","Connexion au projet site-tfab réussie. Synchronisation à la demande, sans écoute temps réel permanente.");
+      return fb;
+    }catch(err){
+      console.error("Firebase init",err);
+      setFirebaseState("err","Firebase : hors ligne","Impossible de charger Firebase. Le portail continue avec sa copie locale.");
+      throw err;
+    }finally{
+      firebaseInitPromise=null;
+    }
+  })();
+  return firebaseInitPromise;
+}
+
+function cloudPayload(){
+  return {
+    schemaVersion:2,
+    settings:clone(settings),
+    apps:clone(apps),
+    codeHash:currentCodeHash(),
+    updatedAtClient:new Date().toISOString(),
+    updatedAt:fb?.serverTimestamp ? fb.serverTimestamp() : null
+  };
+}
+
+async function loadFromFirebase({apply=true,quiet=false}={}){
+  if(firebaseBusy) return false;
+  firebaseBusy=true;
+  try{
+    const api=await ensureFirebase();
+    setFirebaseState("sync","Firebase : lecture…","Lecture du document unique portails/atelier…");
+    const ref=api.doc(api.db,FIRESTORE_COLLECTION,FIRESTORE_DOCUMENT);
+    const snap=await api.getDoc(ref);
+    if(!snap.exists()){
+      cloudLoadedOnce=true;
+      setFirebaseState("ok","Firebase : connecté","Aucune configuration cloud n'existe encore. La première synchronisation créera portails/atelier.");
+      return false;
+    }
+    const data=snap.data()||{};
+    if(typeof data.codeHash==="string" && /^[a-f0-9]{64}$/i.test(data.codeHash)){
+      cloudCodeHash=data.codeHash;
+      localStorage.setItem("portalCodeHash",data.codeHash);
+    }
+    if(apply){
+      if(Array.isArray(data.apps)){
+        apps=data.apps;
+        saveJSON("portalApps",apps);
+      }
+      if(data.settings && typeof data.settings==="object"){
+        settings={...DEFAULT_SETTINGS,...data.settings};
+        saveJSON("portalSettings",settings);
+      }
+      applySettings();
+      fillSettingsForm();
+      render();
+    }
+    cloudLoadedOnce=true;
+    lastCloudUpdatedAt=data.updatedAtClient||null;
+    const when=lastCloudUpdatedAt ? new Date(lastCloudUpdatedAt).toLocaleString("fr-FR") : "date inconnue";
+    setFirebaseState("ok","Firebase : synchronisé",`Configuration chargée depuis Firebase · dernière modification : ${when}.`);
+    if(!quiet) showToast("Configuration Firebase chargée.");
+    return true;
+  }catch(err){
+    console.error("Firebase load",err);
+    const code=err?.code ? ` (${err.code})` : "";
+    setFirebaseState("err","Firebase : erreur",`Lecture Firestore impossible${code}. Vérifie que Firestore est créé et que les règles autorisent l'accès au document portails/atelier.`);
+    if(!quiet) showToast("Impossible de lire Firebase. Mode local conservé.");
+    return false;
+  }finally{
+    firebaseBusy=false;
+  }
+}
+
+async function syncToFirebase(manual=false){
+  if(firebaseBusy){ if(manual) showToast("Une synchronisation est déjà en cours."); return false; }
+  firebaseBusy=true;
+  try{
+    const api=await ensureFirebase();
+    setFirebaseState("sync","Firebase : enregistrement…","Une seule écriture Firestore est en cours pour toute la configuration.");
+    const ref=api.doc(api.db,FIRESTORE_COLLECTION,FIRESTORE_DOCUMENT);
+    const payload=cloudPayload();
+    await api.setDoc(ref,payload,{merge:false});
+    lastCloudUpdatedAt=payload.updatedAtClient;
+    setFirebaseState("ok","Firebase : synchronisé",`Configuration enregistrée dans portails/atelier à ${new Date(lastCloudUpdatedAt).toLocaleString("fr-FR")}.`);
+    if(manual) showToast("Synchronisation Firebase terminée.");
+    return true;
+  }catch(err){
+    console.error("Firebase save",err);
+    const code=err?.code ? ` (${err.code})` : "";
+    setFirebaseState("err","Firebase : erreur",`Écriture Firestore impossible${code}. Les modifications restent sauvegardées localement.`);
+    if(manual) showToast("Échec Firebase : sauvegarde locale conservée.");
+    return false;
+  }finally{
+    firebaseBusy=false;
+  }
+}
+
+function queueFirebaseSave(){
+  clearTimeout(firebaseSaveTimer);
+  firebaseSaveTimer=setTimeout(()=>syncToFirebase(false),700);
+}
+
+async function reloadFromFirebase(){
+  if(!confirm("Recharger la configuration depuis Firebase ? Les réglages locaux non synchronisés seront remplacés.")) return;
+  await loadFromFirebase({apply:true,quiet:false});
 }
 
 document.getElementById("loginForm").addEventListener("submit", async e=>{
   e.preventDefault();
   const code=document.getElementById("loginCode").value;
+  // Une seule lecture au moment de la connexion permet de récupérer le code partagé et la dernière configuration.
+  await loadFromFirebase({apply:true,quiet:true});
   const hash=await sha256(code);
   if(hash===currentCodeHash()){
     sessionStorage.setItem("portalAuthenticated","1");
@@ -447,6 +623,7 @@ function unlock(){
   document.getElementById("loginError").textContent="";
   applySettings();
   render();
+  if(!cloudLoadedOnce) loadFromFirebase({apply:true,quiet:true});
 }
 function logout(){
   sessionStorage.removeItem("portalAuthenticated");
@@ -605,7 +782,7 @@ function savePortalSettings(){
     heroTitle:document.getElementById("setHeroTitle").value.trim(),
     heroText:document.getElementById("setHeroText").value.trim()
   };
-  saveJSON("portalSettings",settings); applySettings(); showToast("Présentation enregistrée.");
+  saveJSON("portalSettings",settings); applySettings(); queueFirebaseSave(); showToast("Présentation enregistrée et synchronisation programmée.");
 }
 
 function renderAdminList(){
@@ -672,21 +849,21 @@ function saveApp(){
   };
   const idx=apps.findIndex(a=>a.id===id);
   if(idx>=0) apps[idx]=data; else apps.push(data);
-  saveJSON("portalApps",apps);
-  closeAppModal(); render(); showToast("Application enregistrée.");
+  saveJSON("portalApps",apps); queueFirebaseSave();
+  closeAppModal(); render(); showToast("Application enregistrée et synchronisation programmée.");
 }
 function deleteApp(id){
   const app=apps.find(a=>a.id===id);
   if(!app || !confirm(`Supprimer « ${app.name} » du portail ?`)) return;
   apps=apps.filter(a=>a.id!==id);
   favorites=favorites.filter(x=>x!==id); recents=recents.filter(x=>x!==id);
-  saveJSON("portalApps",apps); saveJSON("portalFavorites",favorites); saveJSON("portalRecents",recents);
-  render(); showToast("Application supprimée.");
+  saveJSON("portalApps",apps); saveJSON("portalFavorites",favorites); saveJSON("portalRecents",recents); queueFirebaseSave();
+  render(); showToast("Application supprimée et synchronisation programmée.");
 }
 function moveApp(index,delta){
   const j=index+delta; if(j<0||j>=apps.length) return;
   [apps[index],apps[j]]=[apps[j],apps[index]];
-  saveJSON("portalApps",apps); render();
+  saveJSON("portalApps",apps); queueFirebaseSave(); render();
 }
 
 async function changeAccessCode(){
@@ -696,11 +873,14 @@ async function changeAccessCode(){
   if(await sha256(cur)!==currentCodeHash()) return showToast("Le code actuel est incorrect.");
   if(next.length<6) return showToast("Le nouveau code doit contenir au moins 6 caractères.");
   if(next!==conf) return showToast("Les deux nouveaux codes ne correspondent pas.");
-  localStorage.setItem("portalCodeHash",await sha256(next));
+  const nextHash=await sha256(next);
+  localStorage.setItem("portalCodeHash",nextHash);
+  cloudCodeHash=nextHash;
+  queueFirebaseSave();
   document.getElementById("currentCode").value="";
   document.getElementById("newCode").value="";
   document.getElementById("confirmCode").value="";
-  showToast("Code d’accès modifié.");
+  showToast("Code d’accès modifié. Il sera synchronisé avec Firebase.");
 }
 
 function exportConfig(){
@@ -727,7 +907,7 @@ document.getElementById("importFile").addEventListener("change",async e=>{
     recents=Array.isArray(data.recents)?data.recents:[];
     saveJSON("portalApps",apps); saveJSON("portalSettings",settings); saveJSON("portalFavorites",favorites); saveJSON("portalRecents",recents);
     if(typeof data.codeHash==="string" && /^[a-f0-9]{64}$/i.test(data.codeHash)) localStorage.setItem("portalCodeHash",data.codeHash);
-    applySettings(); fillSettingsForm(); render(); showToast("Configuration restaurée.");
+    applySettings(); fillSettingsForm(); render(); showToast("Configuration restaurée localement. Clique sur Synchroniser maintenant pour l’envoyer sur Firebase.");
   }catch(err){showToast("Fichier de sauvegarde non valide.");}
   e.target.value="";
 });
@@ -739,9 +919,10 @@ function resetAll(){
   localStorage.removeItem("portalFavorites");
   localStorage.removeItem("portalRecents");
   localStorage.removeItem("portalCodeHash");
+  cloudCodeHash=DEFAULT_CODE_HASH;
   apps=clone(DEFAULT_APPS); settings=clone(DEFAULT_SETTINGS); favorites=[]; recents=[];
-  applySettings(); fillSettingsForm(); render();
-  showToast("Portail réinitialisé. Le code par défaut est de nouveau actif.");
+  applySettings(); fillSettingsForm(); render(); queueFirebaseSave();
+  showToast("Portail réinitialisé. Le code par défaut est de nouveau actif et sera synchronisé.");
 }
 
 function showToast(msg){
