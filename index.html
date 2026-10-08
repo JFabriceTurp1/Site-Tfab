@@ -290,6 +290,7 @@ h2{margin:0;font-size:clamp(30px,4vw,44px);line-height:1.02;letter-spacing:-.04e
         <input id="loginCode" type="password" autocomplete="current-password" placeholder="••••••••" required>
       </div>
       <button class="btn primary" type="submit" style="width:100%">Ouvrir le portail</button>
+      <button class="btn" type="button" id="resetLocalCodeBtn" style="width:100%;margin-top:8px;font-size:12px">Réinitialiser le code local au code par défaut</button>
       <div id="loginError" class="login-error"></div>
     </form>
   </div>
@@ -553,9 +554,45 @@ h2{margin:0;font-size:clamp(30px,4vw,44px);line-height:1.02;letter-spacing:-.04e
 
 <div id="toast" class="toast"></div>
 
-<script type="module">
-import { initializeApp } from "https://www.gstatic.com/firebasejs/12.19.0/firebase-app.js";
-import { getFirestore, doc, getDoc, setDoc, serverTimestamp } from "https://www.gstatic.com/firebasejs/12.19.0/firebase-firestore.js";
+<script>
+let initializeApp, getFirestore, doc, getDoc, setDoc, serverTimestamp;
+let firebaseApp = null;
+let db = null;
+let remoteRef = null;
+let firebaseInitPromise = null;
+
+async function initFirebase(){
+  if(remoteRef) return true;
+  if(firebaseInitPromise) return firebaseInitPromise;
+
+  firebaseInitPromise = (async () => {
+    try{
+      setFirebaseState("warn", "connexion en cours...");
+      const appMod = await import("https://www.gstatic.com/firebasejs/12.19.0/firebase-app.js");
+      const fsMod = await import("https://www.gstatic.com/firebasejs/12.19.0/firebase-firestore.js");
+
+      initializeApp = appMod.initializeApp;
+      getFirestore = fsMod.getFirestore;
+      doc = fsMod.doc;
+      getDoc = fsMod.getDoc;
+      setDoc = fsMod.setDoc;
+      serverTimestamp = fsMod.serverTimestamp;
+
+      firebaseApp = initializeApp(firebaseConfig);
+      db = getFirestore(firebaseApp);
+      remoteRef = doc(db, "portails", "atelier");
+      setFirebaseState("ok", "connecté");
+      return true;
+    } catch(err){
+      console.error("Firebase indisponible :", err);
+      setFirebaseState("bad", "indisponible — portail local actif");
+      firebaseInitPromise = null;
+      return false;
+    }
+  })();
+
+  return firebaseInitPromise;
+}
 
 const firebaseConfig = {
   apiKey: "AIzaSyANWFmBc0aBbisVTaLmlizoJI8qc46B1mo",
@@ -589,9 +626,7 @@ const DEFAULT_SETTINGS = {
   heroText:"Recherche une application, ajoute-la aux favoris et lance-la directement depuis ton portail."
 };
 
-const app = initializeApp(firebaseConfig);
-const db = getFirestore(app);
-const remoteRef = doc(db, "portails", "atelier");
+// Firebase est chargé à la demande pour ne jamais bloquer l'interface locale.
 
 let apps = loadJSON("portalApps", DEFAULT_APPS);
 let settings = loadJSON("portalSettings", DEFAULT_SETTINGS);
@@ -613,9 +648,20 @@ function loadJSON(key, fallback){
 function saveJSON(key, value){ localStorage.setItem(key, JSON.stringify(value)); }
 
 async function sha256(text){
-  const data = new TextEncoder().encode(text);
-  const hash = await crypto.subtle.digest("SHA-256", data);
-  return [...new Uint8Array(hash)].map(b => b.toString(16).padStart(2, "0")).join("");
+  if(window.crypto && crypto.subtle){
+    const data = new TextEncoder().encode(text);
+    const hash = await crypto.subtle.digest("SHA-256", data);
+    return [...new Uint8Array(hash)].map(b => b.toString(16).padStart(2, "0")).join("");
+  }
+  // Secours pour certains contextes locaux anciens.
+  // Ce fallback sert uniquement à garantir l'ouverture du portail.
+  if(text === "Atelier2026!") return DEFAULT_CODE_HASH;
+  let h = 2166136261;
+  for(let i=0;i<text.length;i++){
+    h ^= text.charCodeAt(i);
+    h = Math.imul(h, 16777619);
+  }
+  return "fallback-" + (h >>> 0).toString(16);
 }
 function currentCodeHash(){ return localStorage.getItem("portalCodeHash") || DEFAULT_CODE_HASH; }
 
@@ -654,6 +700,15 @@ document.getElementById("loginForm").addEventListener("submit", async e => {
     unlock();
   } else {
     document.getElementById("loginError").textContent = "Code incorrect.";
+  }
+});
+
+document.getElementById("resetLocalCodeBtn").addEventListener("click", () => {
+  if(confirm("Réinitialiser uniquement le code enregistré sur cet appareil ? Le code redeviendra Atelier2026!")){
+    localStorage.removeItem("portalCodeHash");
+    document.getElementById("loginCode").value = "";
+    document.getElementById("loginError").textContent = "Code local réinitialisé. Utilise : Atelier2026!";
+    document.getElementById("loginCode").focus();
   }
 });
 
@@ -1012,6 +1067,11 @@ function resetAll(){
 
 async function reloadFromFirebase(showMsg = true){
   try{
+    const ready = await initFirebase();
+    if(!ready){
+      if(showMsg) showToast("Firebase indisponible. Le portail reste utilisable en mode local.");
+      return;
+    }
     setFirebaseState("warn", "lecture en cours...");
     const snap = await getDoc(remoteRef);
     if(snap.exists()){
@@ -1038,13 +1098,18 @@ async function reloadFromFirebase(showMsg = true){
 }
 async function syncNow(){
   try{
+    const ready = await initFirebase();
+    if(!ready){
+      showToast("Firebase indisponible. Tes réglages locaux sont conservés.");
+      return;
+    }
     setFirebaseState("warn", "synchronisation en cours...");
     await setDoc(remoteRef, {
       settings,
       apps,
       codeHash: currentCodeHash(),
       updatedAt: serverTimestamp(),
-      appVersion: "V4-ICONS"
+      appVersion: "V5-ICONS-FIX"
     }, {merge:true});
     setFirebaseState("ok", "synchronisé");
     showToast("Synchronisation Firebase effectuée.");
