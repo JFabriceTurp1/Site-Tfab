@@ -666,7 +666,10 @@ async function sha256(text){
 function currentCodeHash(){ return localStorage.getItem("portalCodeHash") || DEFAULT_CODE_HASH; }
 
 function escapeHTML(v){
-  return String(v ?? "").replace(/[&<>"']/g, m => ({"&":"&amp;","<":"&lt;",">":"&gt;",""":"&quot;","'":"&#39;"}[m]));
+  return String(v ?? "").replace(/[&<>"']/g, function(ch){
+    const map = {"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"};
+    return map[ch];
+  });
 }
 function labelStatus(status){ return {stable:"Stable", test:"Test", dev:"Développement", local:"Local"}[status] || status; }
 function categoryLabel(cat){
@@ -1109,7 +1112,7 @@ async function syncNow(){
       apps,
       codeHash: currentCodeHash(),
       updatedAt: serverTimestamp(),
-      appVersion: "V5-ICONS-FIX"
+      appVersion: "V6-ICONS-FIXED"
     }, {merge:true});
     setFirebaseState("ok", "synchronisé");
     showToast("Synchronisation Firebase effectuée.");
