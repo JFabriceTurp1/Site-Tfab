@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
 <meta name="theme-color" content="#0f172a">
-<title>Portail professionnel · Atelier pédagogique · V8</title>
+<title>Portail professionnel · Atelier pédagogique · V9 AutoSync</title>
 
 <style>
 :root{
@@ -423,7 +423,7 @@ h2{margin:0;font-size:29px;letter-spacing:-.025em;font-weight:720}
 
     <div class="sidebar-foot">
       <button class="btn small" style="width:100%;background:#1e293b;color:#fff;border-color:#334155" onclick="logout()">🔒 Verrouiller</button>
-      <div style="margin-top:10px">Synchronisation Firebase intégrée.</div>
+      <div style="margin-top:10px">Synchronisation Firebase automatique.</div>
     </div>
   </aside>
 
@@ -568,8 +568,12 @@ h2{margin:0;font-size:29px;letter-spacing:-.025em;font-weight:720}
 
         <div class="panel">
           <h3>Synchronisation Firebase</h3>
-          <p class="muted">Le portail est connecté au projet <strong>site-tfab</strong> et au document <strong>portails/atelier</strong>.</p>
+          <p class="muted">Le portail synchronise automatiquement les modifications avec <strong>site-tfab</strong> · <strong>portails/atelier</strong>.</p>
           <div class="admin-note" id="firebaseStatusBox">État Firebase : en attente.</div>
+          <div style="margin-top:8px;color:#6b778c;font-size:11px;line-height:1.45">
+            Les ajouts, modifications, suppressions et changements d’ordre sont envoyés automatiquement vers Firebase.
+            Le portail recharge aussi la configuration lorsque tu reviens dessus sur un autre appareil.
+          </div>
           <div class="top-actions" style="justify-content:flex-start;margin-top:14px">
             <button class="btn" onclick="reloadFromFirebase()">Recharger depuis Firebase</button>
             <button class="btn primary" onclick="syncNow()">Synchroniser maintenant</button>
@@ -1178,7 +1182,8 @@ function savePortalSettings(){
   };
   saveJSON("portalSettings", settings);
   applySettings();
-  showToast("Présentation enregistrée.");
+  showToast("Présentation enregistrée. Synchronisation…");
+  scheduleAutoSync("présentation");
 }
 function renderAdminList(){
   const list = document.getElementById("adminList");
@@ -1240,6 +1245,28 @@ document.getElementById("appColor").addEventListener("input", () => {
 function slugify(s){
   return s.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") || ("app-" + Date.now());
 }
+
+let autoSyncTimer = null;
+let lastSyncSignature = "";
+let lastRemoteReloadAt = 0;
+
+function remotePayloadSignature(){
+  return JSON.stringify({
+    settings,
+    apps,
+    codeHash: currentCodeHash()
+  });
+}
+
+function scheduleAutoSync(reason = ""){
+  clearTimeout(autoSyncTimer);
+  autoSyncTimer = setTimeout(async () => {
+    const signature = remotePayloadSignature();
+    if(signature === lastSyncSignature) return;
+    await syncNow(false, reason);
+  }, 700);
+}
+
 function saveApp(){
   const name = document.getElementById("appName").value.trim();
   if(!name) return showToast("Le nom de l’application est obligatoire.");
@@ -1261,7 +1288,8 @@ function saveApp(){
   saveJSON("portalApps", apps);
   closeAppModal();
   render();
-  showToast("Application enregistrée.");
+  showToast("Application enregistrée. Synchronisation…");
+  scheduleAutoSync("application");
 }
 function deleteApp(id){
   const app = apps.find(a => a.id === id);
@@ -1273,7 +1301,8 @@ function deleteApp(id){
   saveJSON("portalFavorites", favorites);
   saveJSON("portalRecents", recents);
   render();
-  showToast("Application supprimée.");
+  showToast("Application supprimée. Synchronisation…");
+  scheduleAutoSync("suppression");
 }
 function moveApp(index, delta){
   const j = index + delta;
@@ -1281,6 +1310,7 @@ function moveApp(index, delta){
   [apps[index], apps[j]] = [apps[j], apps[index]];
   saveJSON("portalApps", apps);
   render();
+  scheduleAutoSync("ordre");
 }
 async function changeAccessCode(){
   const cur = document.getElementById("currentCode").value;
@@ -1293,7 +1323,8 @@ async function changeAccessCode(){
   document.getElementById("currentCode").value = "";
   document.getElementById("newCode").value = "";
   document.getElementById("confirmCode").value = "";
-  showToast("Code d’accès modifié.");
+  showToast("Code d’accès modifié. Synchronisation…");
+  scheduleAutoSync("code");
 }
 function exportConfig(){
   const payload = {
@@ -1327,7 +1358,8 @@ document.getElementById("importFile").addEventListener("change", async e => {
     applySettings();
     fillSettingsForm();
     render();
-    showToast("Configuration restaurée.");
+    showToast("Configuration restaurée. Synchronisation…");
+    scheduleAutoSync("import");
   } catch(err) {
     showToast("Fichier de sauvegarde non valide.");
   }
@@ -1370,6 +1402,8 @@ async function reloadFromFirebase(showMsg = true){
       applySettings();
       fillSettingsForm();
       render();
+      lastSyncSignature = remotePayloadSignature();
+      lastRemoteReloadAt = Date.now();
       setFirebaseState("ok", "config chargée depuis Firebase");
       if(showMsg) showToast("Configuration rechargée depuis Firebase.");
     } else {
@@ -1382,29 +1416,56 @@ async function reloadFromFirebase(showMsg = true){
     if(showMsg) showToast("Erreur lors de la lecture Firebase.");
   }
 }
-async function syncNow(){
+async function syncNow(showMsg = true, reason = ""){
   try{
     const ready = await initFirebase();
     if(!ready){
-      showToast("Firebase indisponible. Tes réglages locaux sont conservés.");
-      return;
+      if(showMsg) showToast("Firebase indisponible. Tes réglages locaux sont conservés.");
+      return false;
     }
+
+    const signature = remotePayloadSignature();
+    if(signature === lastSyncSignature){
+      setFirebaseState("ok", "déjà synchronisé");
+      if(showMsg) showToast("La configuration est déjà synchronisée.");
+      return true;
+    }
+
     setFirebaseState("warn", "synchronisation en cours...");
     await setDoc(remoteRef, {
       settings,
       apps,
       codeHash: currentCodeHash(),
       updatedAt: serverTimestamp(),
-      appVersion: "V6-ICONS-FIXED"
+      appVersion: "V9-PRO-AUTOSYNC"
     }, {merge:true});
-    setFirebaseState("ok", "synchronisé");
-    showToast("Synchronisation Firebase effectuée.");
+
+    lastSyncSignature = signature;
+    setFirebaseState("ok", "synchronisé automatiquement");
+    if(showMsg) showToast("Synchronisation Firebase effectuée.");
+    return true;
   } catch(err){
     console.error(err);
     setFirebaseState("bad", "erreur de synchronisation");
-    showToast("Erreur lors de la synchronisation Firebase.");
+    if(showMsg) showToast("Erreur lors de la synchronisation Firebase.");
+    return false;
   }
 }
+
+
+async function refreshWhenReturning(){
+  if(document.hidden) return;
+  if(Date.now() - lastRemoteReloadAt < 30000) return;
+  await reloadFromFirebase(false);
+}
+
+document.addEventListener("visibilitychange", () => {
+  if(!document.hidden) refreshWhenReturning();
+});
+
+window.addEventListener("pageshow", () => {
+  refreshWhenReturning();
+});
 
 function showToast(msg){
   const t = document.getElementById("toast");
