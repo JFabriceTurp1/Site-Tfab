@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
 <meta name="theme-color" content="#0f172a">
-<title>Portail professionnel · Atelier pédagogique · V9 AutoSync</title>
+<title>Portail professionnel · Atelier pédagogique · V11</title>
 
 <style>
 :root{
@@ -380,6 +380,15 @@ h2{margin:0;font-size:29px;letter-spacing:-.025em;font-weight:720}
 }
 </style>
 
+
+<style id="categories-archive-style">
+.category-admin-list{display:grid;gap:7px}
+.category-admin-row{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:10px;align-items:center;border:1px solid var(--line);border-radius:9px;padding:9px 10px;background:#fff}
+.category-admin-row strong{font-size:12px}.category-admin-row small{display:block;color:var(--muted);font-size:10px;margin-top:2px}
+.archive-badge{display:inline-flex;align-items:center;gap:5px;padding:4px 7px;border-radius:999px;background:#f2f4f7;color:#667384;font-size:9px;font-weight:800}
+.archive-actions{display:flex;gap:5px;flex-wrap:wrap}
+</style>
+
 </head>
 <body>
 
@@ -413,11 +422,8 @@ h2{margin:0;font-size:29px;letter-spacing:-.025em;font-weight:720}
     <nav>
       <button class="nav-btn active" data-view="home" data-filter="all"><span class="nav-ico">⌂</span>Accueil</button>
       <button class="nav-btn" data-view="home" data-filter="favorite"><span class="nav-ico">★</span>Mes favoris</button>
-      <button class="nav-btn" data-view="home" data-filter="evaluation"><span class="nav-ico">✓</span>Évaluation</button>
-      <button class="nav-btn" data-view="home" data-filter="tp"><span class="nav-ico">🧩</span>TP & pédagogie</button>
-      <button class="nav-btn" data-view="home" data-filter="atelier"><span class="nav-ico">🔧</span>Atelier</button>
-      <button class="nav-btn" data-view="home" data-filter="utilitaire"><span class="nav-ico">⚙</span>Utilitaires</button>
-      <button class="nav-btn" data-view="home" data-filter="archive"><span class="nav-ico">◷</span>Tests / Archives</button>
+      <div id="dynamicCategoryNav"></div>
+      <button class="nav-btn" data-view="home" data-filter="archived"><span class="nav-ico">◷</span>Archives</button>
       <button class="nav-btn" data-view="settings"><span class="nav-ico">⚙</span>Paramètres</button>
     </nav>
 
@@ -530,6 +536,17 @@ h2{margin:0;font-size:29px;letter-spacing:-.025em;font-weight:720}
             </div>
           </div>
           <button class="btn primary" onclick="savePortalSettings()">Enregistrer la présentation</button>
+        </div>
+
+        <div class="panel">
+          <div class="section-head">
+            <div>
+              <h3>Catégories</h3>
+              <p>Crée et organise librement les catégories utilisées pour classer les applications.</p>
+            </div>
+            <button class="btn primary" onclick="addCategory()">＋ Nouvelle catégorie</button>
+          </div>
+          <div id="categoryAdminList" class="category-admin-list"></div>
         </div>
 
         <div class="panel">
@@ -663,6 +680,9 @@ h2{margin:0;font-size:29px;letter-spacing:-.025em;font-weight:720}
       <div class="field full">
         <label><input id="appEnabled" type="checkbox" checked style="width:auto;margin-right:8px"> Application visible dans le portail</label>
       </div>
+      <div class="field full">
+        <label><input id="appArchived" type="checkbox" style="width:auto;margin-right:8px"> Archiver cette application</label>
+      </div>
     </div>
     <div class="top-actions" style="justify-content:flex-end;margin-top:12px">
       <button class="btn" onclick="closeAppModal()">Annuler</button>
@@ -736,6 +756,13 @@ const DEFAULT_APPS = [
   {id:"pfmp",name:"Suivi PFMP",category:"atelier",description:"Suivi des stages et des échéances.",icon:"🏢",status:"dev",version:"Projet",color:"#16a34a",url:"",enabled:true},
   {id:"contenus",name:"Créateur de contenus pédagogiques",category:"tp",description:"Création locale de jeux et contenus interactifs.",icon:"🎓",status:"dev",version:"Essai",color:"#6d28d9",url:"",enabled:true}
 ];
+const DEFAULT_CATEGORIES = [
+  {id:"evaluation", name:"Évaluation"},
+  {id:"tp", name:"TP & pédagogie"},
+  {id:"atelier", name:"Atelier"},
+  {id:"utilitaire", name:"Utilitaires"}
+];
+
 const DEFAULT_SETTINGS = {
   portalTitle:"SUITE ATELIER PÉDAGOGIQUE",
   portalSubtitle:"Portail d'applications",
@@ -748,6 +775,7 @@ const DEFAULT_SETTINGS = {
 // Firebase est chargé à la demande pour ne jamais bloquer l'interface locale.
 
 let apps = loadJSON("portalApps", DEFAULT_APPS);
+let categories = loadJSON("portalCategories", DEFAULT_CATEGORIES);
 let settings = loadJSON("portalSettings", DEFAULT_SETTINGS);
 let favorites = loadJSON("portalFavorites", []);
 let recents = loadJSON("portalRecents", []);
@@ -941,13 +969,8 @@ function escapeHTML(v){
 }
 function labelStatus(status){ return {stable:"Stable", test:"Test", dev:"Développement", local:"Local"}[status] || status; }
 function categoryLabel(cat){
-  return {
-    evaluation:"Évaluation",
-    tp:"TP & pédagogie",
-    atelier:"Atelier",
-    utilitaire:"Utilitaires",
-    archive:"Tests / Archives"
-  }[cat] || cat;
+  if(cat === "archived") return "Archives";
+  return categories.find(c => c.id === cat)?.name || cat;
 }
 
 function setFirebaseState(kind, text){
@@ -988,9 +1011,13 @@ function unlock(){
   document.getElementById("app").classList.remove("hidden");
   document.getElementById("loginCode").value = "";
   document.getElementById("loginError").textContent = "";
-  applySettings();
-  fillSettingsForm();
-  render();
+
+  // L'accueil doit toujours s'afficher immédiatement à partir du cache local.
+  try { applySettings(); } catch(err) { console.warn("Présentation non bloquante :", err); }
+  try { render(); } catch(err) { console.error("Erreur d'affichage initial :", err); }
+  try { fillSettingsForm(); } catch(err) { console.warn("Paramètres non bloquants :", err); }
+
+  // Firebase vient ensuite mettre à jour le cache, sans bloquer l'ouverture.
   reloadFromFirebase(false);
 }
 function logout(){
@@ -1002,35 +1029,175 @@ function logout(){
 if(sessionStorage.getItem("portalAuthenticated") === "1") unlock();
 
 function applySettings(){
-  document.getElementById("brandTitle").innerHTML = (settings.portalTitle || "SUITE ATELIER PÉDAGOGIQUE").replace("ATELIER PÉDAGOGIQUE","ATELIER<br>PÉDAGOGIQUE");
-  document.getElementById("brandSubtitle").textContent = settings.portalSubtitle || "";
-  document.getElementById("welcomeTitle").textContent = settings.welcomeTitle || "";
-  document.getElementById("welcomeSubtitle").textContent = settings.welcomeSubtitle || "";
-  document.getElementById("heroTitle").textContent = settings.heroTitle || "";
-  document.getElementById("heroText").textContent = settings.heroText || "";
+  const setText = (id, value) => {
+    const el = document.getElementById(id);
+    if(el) el.textContent = value || "";
+  };
+
+  const brand = document.getElementById("brandTitle");
+  if(brand){
+    brand.innerHTML = (settings.portalTitle || "SUITE ATELIER PÉDAGOGIQUE")
+      .replace("ATELIER PÉDAGOGIQUE","ATELIER<br>PÉDAGOGIQUE");
+  }
+
+  setText("brandSubtitle", settings.portalSubtitle);
+  setText("welcomeTitle", settings.welcomeTitle);
+  setText("welcomeSubtitle", settings.welcomeSubtitle);
+
+  // Compatibilité avec les anciennes versions qui possédaient encore un bandeau Hero.
+  setText("heroTitle", settings.heroTitle);
+  setText("heroText", settings.heroText);
 }
 
 function filteredApps(){
   return apps.filter(app => {
-    if(!app.enabled) return false;
-    const matchNav = navFilter === "all" ? true : navFilter === "favorite" ? favorites.includes(app.id) : app.category === navFilter;
+    const archived = !!app.archived;
+    if(navFilter === "archived"){
+      if(!archived) return false;
+    } else {
+      if(archived || !app.enabled) return false;
+    }
+
+    const matchNav =
+      navFilter === "all" ? true :
+      navFilter === "favorite" ? favorites.includes(app.id) :
+      navFilter === "archived" ? true :
+      app.category === navFilter;
+
     const matchStatus = statusFilter === "all" ? true : app.status === statusFilter;
-    const hay = (app.name + " " + app.description + " " + app.category + " " + app.version).toLowerCase();
-    const matchQuery = hay.includes(query.toLowerCase());
-    return matchNav && matchStatus && matchQuery;
+    const hay = (app.name+" "+app.description+" "+app.category+" "+app.version).toLowerCase();
+    return matchNav && matchStatus && hay.includes(query.toLowerCase());
   });
 }
 function groupedApps(items){
-  const order = ["evaluation","tp","atelier","utilitaire","archive"];
+  if(navFilter === "archived") return [["archived", items]];
+  const order = categories.map(c => c.id);
   const groups = {};
-  for(const k of order) groups[k] = [];
+  for(const id of order) groups[id] = [];
   for(const app of items){
     if(!groups[app.category]) groups[app.category] = [];
     groups[app.category].push(app);
   }
-  return order.filter(k => groups[k]?.length).map(k => [k, groups[k]]);
+  return [
+    ...order.filter(id => groups[id]?.length).map(id => [id, groups[id]]),
+    ...Object.keys(groups).filter(id => !order.includes(id) && groups[id]?.length).map(id => [id, groups[id]])
+  ];
 }
 
+
+
+function categoryUsageCount(id){
+  return apps.filter(a => a.category === id).length;
+}
+function makeCategoryId(name){
+  const base = slugify(name) || "categorie";
+  let id = base, n = 2;
+  while(categories.some(c => c.id === id)) id = `${base}-${n++}`;
+  return id;
+}
+function renderDynamicCategoryNav(){
+  const host = document.getElementById("dynamicCategoryNav");
+  if(!host) return;
+  host.innerHTML = "";
+  categories.forEach(cat => {
+    const btn = document.createElement("button");
+    btn.className = "nav-btn";
+    btn.dataset.view = "home";
+    btn.dataset.filter = cat.id;
+    btn.innerHTML = `<span class="nav-ico">•</span>${escapeHTML(cat.name)}`;
+    btn.onclick = () => setHomeFilter(cat.id, btn);
+    host.appendChild(btn);
+  });
+}
+function refreshCategorySelect(selectedId=""){
+  const select = document.getElementById("appCategory");
+  if(!select) return;
+  const current = selectedId || select.value;
+  select.innerHTML = "";
+  categories.forEach(cat => {
+    const opt = document.createElement("option");
+    opt.value = cat.id; opt.textContent = cat.name;
+    select.appendChild(opt);
+  });
+  if(categories.some(c => c.id === current)) select.value = current;
+  else if(categories[0]) select.value = categories[0].id;
+}
+function renderCategoryAdmin(){
+  const host = document.getElementById("categoryAdminList");
+  if(!host) return;
+  host.innerHTML = "";
+  categories.forEach((cat,index) => {
+    const row = document.createElement("div");
+    row.className = "category-admin-row";
+    const count = categoryUsageCount(cat.id);
+    row.innerHTML = `<div><strong>${escapeHTML(cat.name)}</strong><small>${count} application${count>1?"s":""}</small></div>
+      <div class="archive-actions">
+        <button class="btn small" data-a="up">↑</button>
+        <button class="btn small" data-a="down">↓</button>
+        <button class="btn small" data-a="rename">Renommer</button>
+        <button class="btn small danger" data-a="delete">Supprimer</button>
+      </div>`;
+    row.querySelector('[data-a="up"]').onclick=()=>moveCategory(index,-1);
+    row.querySelector('[data-a="down"]').onclick=()=>moveCategory(index,1);
+    row.querySelector('[data-a="rename"]').onclick=()=>renameCategory(cat.id);
+    row.querySelector('[data-a="delete"]').onclick=()=>deleteCategory(cat.id);
+    host.appendChild(row);
+  });
+}
+function addCategory(){
+  const name = prompt("Nom de la nouvelle catégorie :");
+  if(!name || !name.trim()) return;
+  categories.push({id:makeCategoryId(name.trim()),name:name.trim()});
+  saveJSON("portalCategories",categories);
+  renderDynamicCategoryNav(); renderCategoryAdmin(); refreshCategorySelect(); render();
+  scheduleAutoSync("catégorie ajoutée");
+  showToast("Catégorie créée.");
+}
+function renameCategory(id){
+  const cat = categories.find(c=>c.id===id); if(!cat) return;
+  const name = prompt("Nouveau nom de la catégorie :",cat.name);
+  if(!name || !name.trim()) return;
+  cat.name = name.trim();
+  saveJSON("portalCategories",categories);
+  renderDynamicCategoryNav(); renderCategoryAdmin(); refreshCategorySelect(id); render();
+  scheduleAutoSync("catégorie renommée");
+}
+function deleteCategory(id){
+  const cat = categories.find(c=>c.id===id); if(!cat) return;
+  const used = apps.filter(a=>a.category===id);
+  if(categories.length < 2 && used.length) return showToast("Crée d’abord une autre catégorie.");
+  if(used.length){
+    const target = categories.find(c=>c.id!==id);
+    if(!confirm(`Déplacer ${used.length} application(s) vers « ${target.name} » puis supprimer « ${cat.name} » ?`)) return;
+    used.forEach(a=>a.category=target.id);
+  }else if(!confirm(`Supprimer la catégorie « ${cat.name} » ?`)) return;
+  categories = categories.filter(c=>c.id!==id);
+  saveJSON("portalCategories",categories); saveJSON("portalApps",apps);
+  renderDynamicCategoryNav(); renderCategoryAdmin(); refreshCategorySelect(); render();
+  scheduleAutoSync("catégorie supprimée");
+}
+function moveCategory(index,delta){
+  const j=index+delta; if(j<0||j>=categories.length) return;
+  [categories[index],categories[j]]=[categories[j],categories[index]];
+  saveJSON("portalCategories",categories);
+  renderDynamicCategoryNav(); renderCategoryAdmin(); render();
+  scheduleAutoSync("ordre catégories");
+}
+function archiveApp(id){
+  const app=apps.find(a=>a.id===id); if(!app) return;
+  app.archived=true;
+  favorites=favorites.filter(x=>x!==id);
+  saveJSON("portalApps",apps); saveJSON("portalFavorites",favorites);
+  render(); renderAdminList(); scheduleAutoSync("archivage");
+  showToast("Application archivée.");
+}
+function restoreApp(id){
+  const app=apps.find(a=>a.id===id); if(!app) return;
+  app.archived=false; app.enabled=true;
+  saveJSON("portalApps",apps);
+  render(); renderAdminList(); scheduleAutoSync("restauration");
+  showToast("Application restaurée.");
+}
 
 function render(){
   const host = document.getElementById("categoriesHost");
@@ -1068,15 +1235,17 @@ function render(){
           <div class="app-meta">${escapeHTML(app.version || "")}${app.version ? " · " : ""}${escapeHTML(labelStatus(app.status))}</div>
         </div>
         <div class="app-actions">
-          <button class="icon-btn favorite ${fav ? "on" : ""}" title="Favori" aria-label="Favori">★</button>
-          <button class="launch-btn">Ouvrir</button>
+          ${app.archived
+            ? '<span class="archive-badge">Archivée</span><button class="launch-btn restore-btn">Restaurer</button>'
+            : '<button class="icon-btn favorite ' + (fav ? 'on' : '') + '" title="Favori" aria-label="Favori">★</button><button class="launch-btn">Ouvrir</button>'
+          }
         </div>
       `;
-      row.querySelector(".favorite").onclick = e => {
-        e.stopPropagation();
-        toggleFavorite(app.id);
-      };
-      row.querySelector(".launch-btn").onclick = () => openApp(app);
+      const favoriteBtn = row.querySelector(".favorite");
+      if(favoriteBtn) favoriteBtn.onclick = e => { e.stopPropagation(); toggleFavorite(app.id); };
+      const restoreBtn = row.querySelector(".restore-btn");
+      if(restoreBtn) restoreBtn.onclick = () => restoreApp(app.id);
+      else row.querySelector(".launch-btn").onclick = () => openApp(app);
       appList.appendChild(row);
     });
 
@@ -1085,6 +1254,8 @@ function render(){
 
   updateStats();
   renderAdminList();
+  renderCategoryAdmin();
+  renderDynamicCategoryNav();
 }
 
 function toggleFavorite(id){
@@ -1101,7 +1272,7 @@ function openApp(app){
   window.open(url, "_blank", "noopener");
 }
 function updateStats(){
-  const active = apps.filter(a => a.enabled);
+  const active = apps.filter(a => a.enabled && !a.archived);
   document.getElementById("statApps").textContent = active.length;
   document.getElementById("statStable").textContent = active.filter(a => a.status === "stable").length;
   document.getElementById("statFav").textContent = favorites.filter(id => active.some(a => a.id === id)).length;
@@ -1124,14 +1295,11 @@ function setHomeFilter(filter, btn){
   const titles = {
     all:["Applications","Ouvrir un outil ou filtrer le répertoire."],
     favorite:["Mes favoris","Accès direct aux outils les plus utilisés."],
-    evaluation:["Évaluation","Outils de suivi, d’évaluation et de synthèse."],
-    tp:["TP & pédagogie","Création, diffusion, lecture et correction."],
-    atelier:["Atelier","Organisation opérationnelle et suivi des activités."],
-    utilitaire:["Utilitaires","Administration technique et maintenance."],
-    archive:["Tests / Archives","Anciennes versions et outils secondaires."]
+    archived:["Archives","Applications conservées mais retirées du portail courant."]
   };
-  document.getElementById("sectionTitle").textContent = titles[filter][0];
-  document.getElementById("sectionSubtitle").textContent = titles[filter][1];
+  const current = titles[filter] || [categoryLabel(filter),"Applications classées dans cette catégorie."];
+  document.getElementById("sectionTitle").textContent = current[0];
+  document.getElementById("sectionSubtitle").textContent = current[1];
   document.getElementById("sidebar").classList.remove("open");
   render();
 }
@@ -1164,12 +1332,16 @@ document.addEventListener("click", e => {
 });
 
 function fillSettingsForm(){
-  document.getElementById("setPortalTitle").value = settings.portalTitle || "";
-  document.getElementById("setPortalSubtitle").value = settings.portalSubtitle || "";
-  document.getElementById("setWelcomeTitle").value = settings.welcomeTitle || "";
-  document.getElementById("setWelcomeSubtitle").value = settings.welcomeSubtitle || "";
-  document.getElementById("setHeroTitle").value = settings.heroTitle || "";
-  document.getElementById("setHeroText").value = settings.heroText || "";
+  const setValue = (id, value) => {
+    const el = document.getElementById(id);
+    if(el) el.value = value || "";
+  };
+  setValue("setPortalTitle", settings.portalTitle);
+  setValue("setPortalSubtitle", settings.portalSubtitle);
+  setValue("setWelcomeTitle", settings.welcomeTitle);
+  setValue("setWelcomeSubtitle", settings.welcomeSubtitle);
+  setValue("setHeroTitle", settings.heroTitle);
+  setValue("setHeroText", settings.heroText);
 }
 function savePortalSettings(){
   settings = {
@@ -1195,13 +1367,14 @@ function renderAdminList(){
     row.innerHTML = `
       <div class="ico">${iconSvgFor(app)}</div>
       <div>
-        <h4>${escapeHTML(app.name)} ${app.enabled ? "" : "<span style='color:#b91c1c;font-weight:700'>(masquée)</span>"}</h4>
+        <h4>${escapeHTML(app.name)} ${app.archived ? "<span class='archive-badge'>Archivée</span>" : (!app.enabled ? "<span style='color:#b91c1c;font-weight:700'>(masquée)</span>" : "")}</h4>
         <p>${escapeHTML(categoryLabel(app.category))} · ${escapeHTML(labelStatus(app.status))} · ${escapeHTML(app.version || "")}</p>
       </div>
       <div class="row-actions">
         <button class="btn small" data-act="up">↑</button>
         <button class="btn small" data-act="down">↓</button>
         <button class="btn small" data-act="edit">Modifier</button>
+        <button class="btn small" data-act="archive">${app.archived ? "Restaurer" : "Archiver"}</button>
         <button class="btn small danger" data-act="delete">Supprimer</button>
       </div>
     `;
@@ -1209,6 +1382,7 @@ function renderAdminList(){
     row.querySelector('[data-act="delete"]').onclick = () => deleteApp(app.id);
     row.querySelector('[data-act="up"]').onclick = () => moveApp(index, -1);
     row.querySelector('[data-act="down"]').onclick = () => moveApp(index, 1);
+    row.querySelector('[data-act="archive"]').onclick = () => app.archived ? restoreApp(app.id) : archiveApp(app.id);
     list.appendChild(row);
   });
 }
@@ -1217,7 +1391,7 @@ function openAppModal(id = ""){
   document.getElementById("modalTitle").textContent = app ? "Modifier l’application" : "Ajouter une application";
   document.getElementById("appId").value = app?.id || "";
   document.getElementById("appName").value = app?.name || "";
-  document.getElementById("appCategory").value = app?.category || "evaluation";
+  refreshCategorySelect(app?.category || categories[0]?.id || "");
   document.getElementById("appStatus").value = app?.status || "stable";
   document.getElementById("appVersion").value = app?.version || "";
   document.getElementById("appIconKey").value = app ? inferIconKey(app) : "clipboard-check";
@@ -1225,6 +1399,7 @@ function openAppModal(id = ""){
   document.getElementById("appUrl").value = app?.url || "";
   document.getElementById("appDescription").value = app?.description || "";
   document.getElementById("appEnabled").checked = app ? !!app.enabled : true;
+  document.getElementById("appArchived").checked = app ? !!app.archived : false;
   document.getElementById("iconSearch").value = "";
   currentIconFilter = "";
   updateIconPreview();
@@ -1254,6 +1429,7 @@ function remotePayloadSignature(){
   return JSON.stringify({
     settings,
     apps,
+    categories,
     codeHash: currentCodeHash()
   });
 }
@@ -1281,7 +1457,8 @@ function saveApp(){
     color: document.getElementById("appColor").value,
     url: document.getElementById("appUrl").value.trim(),
     description: document.getElementById("appDescription").value.trim(),
-    enabled: document.getElementById("appEnabled").checked
+    enabled: document.getElementById("appEnabled").checked,
+    archived: document.getElementById("appArchived").checked
   };
   const idx = apps.findIndex(a => a.id === id);
   if(idx >= 0) apps[idx] = data; else apps.push(data);
@@ -1330,7 +1507,7 @@ function exportConfig(){
   const payload = {
     version: 4,
     exportedAt: new Date().toISOString(),
-    settings, apps, favorites, recents,
+    settings, apps, categories, favorites, recents,
     codeHash: currentCodeHash()
   };
   const blob = new Blob([JSON.stringify(payload, null, 2)], {type:"application/json"});
@@ -1347,10 +1524,12 @@ document.getElementById("importFile").addEventListener("change", async e => {
     const data = JSON.parse(await file.text());
     if(!Array.isArray(data.apps) || typeof data.settings !== "object") throw new Error();
     apps = data.apps;
+    categories = Array.isArray(data.categories) && data.categories.length ? data.categories : clone(DEFAULT_CATEGORIES);
     settings = {...DEFAULT_SETTINGS, ...data.settings};
     favorites = Array.isArray(data.favorites) ? data.favorites : [];
     recents = Array.isArray(data.recents) ? data.recents : [];
     saveJSON("portalApps", apps);
+    saveJSON("portalCategories", categories);
     saveJSON("portalSettings", settings);
     saveJSON("portalFavorites", favorites);
     saveJSON("portalRecents", recents);
@@ -1369,10 +1548,12 @@ function resetAll(){
   if(!confirm("Réinitialiser complètement le portail ?")) return;
   localStorage.removeItem("portalApps");
   localStorage.removeItem("portalSettings");
+  localStorage.removeItem("portalCategories");
   localStorage.removeItem("portalFavorites");
   localStorage.removeItem("portalRecents");
   localStorage.removeItem("portalCodeHash");
   apps = clone(DEFAULT_APPS);
+  categories = clone(DEFAULT_CATEGORIES);
   settings = clone(DEFAULT_SETTINGS);
   favorites = [];
   recents = [];
@@ -1395,13 +1576,15 @@ async function reloadFromFirebase(showMsg = true){
     if(snap.exists()){
       const data = snap.data();
       if(Array.isArray(data.apps)) apps = data.apps;
+      if(Array.isArray(data.categories) && data.categories.length) categories = data.categories;
       if(data.settings && typeof data.settings === "object") settings = {...DEFAULT_SETTINGS, ...data.settings};
       if(typeof data.codeHash === "string" && /^[a-f0-9]{64}$/i.test(data.codeHash)) localStorage.setItem("portalCodeHash", data.codeHash);
       saveJSON("portalApps", apps);
+      saveJSON("portalCategories", categories);
       saveJSON("portalSettings", settings);
-      applySettings();
-      fillSettingsForm();
-      render();
+      try { applySettings(); } catch(err) { console.warn("Présentation distante :", err); }
+      try { render(); } catch(err) { console.error("Affichage distant :", err); }
+      try { fillSettingsForm(); } catch(err) { console.warn("Paramètres distants :", err); }
       lastSyncSignature = remotePayloadSignature();
       lastRemoteReloadAt = Date.now();
       setFirebaseState("ok", "config chargée depuis Firebase");
@@ -1435,9 +1618,10 @@ async function syncNow(showMsg = true, reason = ""){
     await setDoc(remoteRef, {
       settings,
       apps,
+      categories,
       codeHash: currentCodeHash(),
       updatedAt: serverTimestamp(),
-      appVersion: "V9-PRO-AUTOSYNC"
+      appVersion: "V11-PRO-STARTUP-FIX"
     }, {merge:true});
 
     lastSyncSignature = signature;
@@ -1477,6 +1661,9 @@ function showToast(msg){
 
 applySettings();
 fillSettingsForm();
+refreshCategorySelect();
+renderCategoryAdmin();
+renderDynamicCategoryNav();
 render();
 setFirebaseState("warn", "en attente");
 </script>
