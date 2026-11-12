@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
 <meta name="theme-color" content="#0f172a">
-<title>Portail professionnel · Atelier pédagogique · V15</title>
+<title>Portail professionnel · Atelier pédagogique · V16</title>
 <link id="dynamicFavicon" rel="icon" href="">
 
 <style>
@@ -417,6 +417,23 @@ h2{margin:0;font-size:29px;letter-spacing:-.025em;font-weight:720}
 <style id="category-visibility-style">
 .category-hidden-badge{display:inline-flex;align-items:center;gap:5px;margin-left:7px;padding:3px 7px;border-radius:999px;background:#f3f4f6;color:#6b7280;font-size:9px;font-weight:800}
 .category-admin-row.is-hidden{background:#f8f9fb;opacity:.78}
+</style>
+
+<style id="category-visibility-v16-style">
+.category-admin-main{min-width:0}
+.category-admin-main strong{display:inline-block;color:#23344c;font-size:12px}
+@media(max-width:760px){
+  .category-admin-row{
+    grid-template-columns:1fr!important;
+    gap:8px!important;
+  }
+  .category-admin-row .archive-actions{
+    justify-content:flex-start!important;
+  }
+  .category-admin-main strong{
+    font-size:13px;
+  }
+}
 </style>
 </head>
 <body>
@@ -1207,23 +1224,25 @@ function renderCategoryAdmin(){
   const host = document.getElementById("categoryAdminList");
   if(!host) return;
   host.innerHTML = "";
+
   categories.forEach((cat,index) => {
     const row = document.createElement("div");
     row.className = "category-admin-row" + (cat.hidden ? " is-hidden" : "");
     const count = categoryUsageCount(cat.id);
-    row.innerHTML = `<div>
+
+    row.innerHTML = `<div class="category-admin-main">
         <strong>${escapeHTML(cat.name)}</strong>
         ${cat.hidden ? '<span class="category-hidden-badge">Masquée</span>' : ''}
         <small>${count} application${count>1?"s":""}</small>
       </div>
       <div class="archive-actions">
-        <button class="btn small ${cat.hidden ? "success" : ""}" data-a="visibility">${cat.hidden ? "Réafficher" : "Masquer"}</button>
-        <button class="btn small" data-a="up">↑</button>
-        <button class="btn small" data-a="down">↓</button>
-        <button class="btn small" data-a="rename">Renommer</button>
-        <button class="btn small danger" data-a="delete">Supprimer</button>
+        <button type="button" class="btn small ${cat.hidden ? "success" : ""}" onclick="toggleCategoryVisibility('${cat.id}')">${cat.hidden ? "Réafficher" : "Masquer"}</button>
+        <button type="button" class="btn small" data-a="up">↑</button>
+        <button type="button" class="btn small" data-a="down">↓</button>
+        <button type="button" class="btn small" data-a="rename">Renommer</button>
+        <button type="button" class="btn small danger" data-a="delete">Supprimer</button>
       </div>`;
-    row.querySelector('[data-a="visibility"]').onclick=()=>toggleCategoryVisibility(cat.id);
+
     row.querySelector('[data-a="up"]').onclick=()=>moveCategory(index,-1);
     row.querySelector('[data-a="down"]').onclick=()=>moveCategory(index,1);
     row.querySelector('[data-a="rename"]').onclick=()=>renameCategory(cat.id);
@@ -1231,14 +1250,21 @@ function renderCategoryAdmin(){
     host.appendChild(row);
   });
 }
-function toggleCategoryVisibility(id){
+async function toggleCategoryVisibility(id){
   const cat = categories.find(c => c.id === id);
-  if(!cat) return;
+  if(!cat){
+    showToast("Catégorie introuvable.");
+    return;
+  }
 
-  cat.hidden = !cat.hidden;
+  const newState = !cat.hidden;
+  cat.hidden = newState;
+
+  // Save locally first so the change is immediate and survives a reload.
   saveJSON("portalCategories", categories);
+  lastRemoteReloadAt = Date.now();
 
-  if(cat.hidden && navFilter === id){
+  if(newState && navFilter === id){
     navFilter = "all";
   }
 
@@ -1246,7 +1272,6 @@ function toggleCategoryVisibility(id){
   renderCategoryAdmin();
   render();
 
-  // Ensure home title is consistent after hiding current category
   if(navFilter === "all"){
     const title = document.getElementById("sectionTitle");
     const subtitle = document.getElementById("sectionSubtitle");
@@ -1254,9 +1279,18 @@ function toggleCategoryVisibility(id){
     if(subtitle) subtitle.textContent = "Ouvrir un outil ou filtrer le répertoire.";
   }
 
-  scheduleAutoSync(cat.hidden ? "catégorie masquée" : "catégorie affichée");
-  showToast(cat.hidden ? "Catégorie masquée de l’accueil." : "Catégorie de nouveau visible.");
+  showToast(newState ? "Catégorie masquée." : "Catégorie réaffichée.");
+
+  // Write immediately to Firebase, rather than waiting for the debounce timer.
+  const ok = await syncNow(false, newState ? "catégorie masquée" : "catégorie affichée");
+  if(!ok){
+    showToast(newState
+      ? "Catégorie masquée localement — Firebase indisponible."
+      : "Catégorie réaffichée localement — Firebase indisponible.");
+  }
 }
+
+window.toggleCategoryVisibility = toggleCategoryVisibility;
 
 function addCategory(){
   const name = prompt("Nom de la nouvelle catégorie :");
@@ -1829,7 +1863,7 @@ async function syncNow(showMsg = true, reason = ""){
       categories,
       codeHash: currentCodeHash(),
       updatedAt: serverTimestamp(),
-      appVersion: "V15-PRO-CATEGORY-HIDE-FIX"
+      appVersion: "V16-PRO-CATEGORY-HIDE-ROBUST"
     }, {merge:true});
 
     lastSyncSignature = signature;
