@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
 <meta name="theme-color" content="#0f172a">
-<title>Portail professionnel · Atelier pédagogique · V13</title>
+<title>Portail professionnel · Atelier pédagogique · V14</title>
 <link id="dynamicFavicon" rel="icon" href="">
 
 <style>
@@ -413,6 +413,11 @@ h2{margin:0;font-size:29px;letter-spacing:-.025em;font-weight:720}
 @media(max-width:760px){.browser-identity-grid{grid-template-columns:1fr}}
 </style>
 
+
+<style id="category-visibility-style">
+.category-hidden-badge{display:inline-flex;align-items:center;gap:5px;margin-left:7px;padding:3px 7px;border-radius:999px;background:#f3f4f6;color:#6b7280;font-size:9px;font-weight:800}
+.category-admin-row.is-hidden{background:#f8f9fb;opacity:.78}
+</style>
 </head>
 <body>
 
@@ -593,7 +598,7 @@ h2{margin:0;font-size:29px;letter-spacing:-.025em;font-weight:720}
           <div class="section-head">
             <div>
               <h3>Catégories</h3>
-              <p>Crée et organise librement les catégories utilisées pour classer les applications.</p>
+              <p>Crée, organise et masque les catégories utilisées pour classer les applications. Une catégorie masquée reste disponible ici mais disparaît de l’accueil.</p>
             </div>
             <button class="btn primary" onclick="addCategory()">＋ Nouvelle catégorie</button>
           </div>
@@ -808,10 +813,10 @@ const DEFAULT_APPS = [
   {id:"contenus",name:"Créateur de contenus pédagogiques",category:"tp",description:"Création locale de jeux et contenus interactifs.",icon:"🎓",status:"dev",version:"Essai",color:"#6d28d9",url:"",enabled:true}
 ];
 const DEFAULT_CATEGORIES = [
-  {id:"evaluation", name:"Évaluation"},
-  {id:"tp", name:"TP & pédagogie"},
-  {id:"atelier", name:"Atelier"},
-  {id:"utilitaire", name:"Utilitaires"}
+  {id:"evaluation", name:"Évaluation", hidden:false},
+  {id:"tp", name:"TP & pédagogie", hidden:false},
+  {id:"atelier", name:"Atelier", hidden:false},
+  {id:"utilitaire", name:"Utilitaires", hidden:false}
 ];
 
 const DEFAULT_SETTINGS = {
@@ -1119,6 +1124,8 @@ function filteredApps(){
       if(!archived) return false;
     } else {
       if(archived || !app.enabled) return false;
+      const category = categories.find(c => c.id === app.category);
+      if(category?.hidden) return false;
     }
 
     const matchNav =
@@ -1134,7 +1141,7 @@ function filteredApps(){
 }
 function groupedApps(items){
   if(navFilter === "archived") return [["archived", items]];
-  const order = categories.map(c => c.id);
+  const order = categories.filter(c => !c.hidden).map(c => c.id);
   const groups = {};
   for(const id of order) groups[id] = [];
   for(const app of items){
@@ -1162,7 +1169,7 @@ function renderDynamicCategoryNav(){
   const host = document.getElementById("dynamicCategoryNav");
   if(!host) return;
   host.innerHTML = "";
-  categories.forEach(cat => {
+  categories.filter(cat => !cat.hidden).forEach(cat => {
     const btn = document.createElement("button");
     btn.className = "nav-btn";
     btn.dataset.view = "home";
@@ -1191,15 +1198,21 @@ function renderCategoryAdmin(){
   host.innerHTML = "";
   categories.forEach((cat,index) => {
     const row = document.createElement("div");
-    row.className = "category-admin-row";
+    row.className = "category-admin-row" + (cat.hidden ? " is-hidden" : "");
     const count = categoryUsageCount(cat.id);
-    row.innerHTML = `<div><strong>${escapeHTML(cat.name)}</strong><small>${count} application${count>1?"s":""}</small></div>
+    row.innerHTML = `<div>
+        <strong>${escapeHTML(cat.name)}</strong>
+        ${cat.hidden ? '<span class="category-hidden-badge">Masquée</span>' : ''}
+        <small>${count} application${count>1?"s":""}</small>
+      </div>
       <div class="archive-actions">
+        <button class="btn small" data-a="visibility">${cat.hidden ? "Afficher" : "Masquer"}</button>
         <button class="btn small" data-a="up">↑</button>
         <button class="btn small" data-a="down">↓</button>
         <button class="btn small" data-a="rename">Renommer</button>
         <button class="btn small danger" data-a="delete">Supprimer</button>
       </div>`;
+    row.querySelector('[data-a="visibility"]').onclick=()=>toggleCategoryVisibility(cat.id);
     row.querySelector('[data-a="up"]').onclick=()=>moveCategory(index,-1);
     row.querySelector('[data-a="down"]').onclick=()=>moveCategory(index,1);
     row.querySelector('[data-a="rename"]').onclick=()=>renameCategory(cat.id);
@@ -1207,10 +1220,35 @@ function renderCategoryAdmin(){
     host.appendChild(row);
   });
 }
+function toggleCategoryVisibility(id){
+  const cat = categories.find(c => c.id === id);
+  if(!cat) return;
+
+  cat.hidden = !cat.hidden;
+  saveJSON("portalCategories", categories);
+
+  if(cat.hidden && navFilter === id){
+    navFilter = "all";
+    document.querySelectorAll(".nav-btn").forEach(b => b.classList.remove("active"));
+    const allBtn = document.querySelector('.nav-btn[data-filter="all"]');
+    if(allBtn) allBtn.classList.add("active");
+    const title = document.getElementById("sectionTitle");
+    const subtitle = document.getElementById("sectionSubtitle");
+    if(title) title.textContent = "Applications";
+    if(subtitle) subtitle.textContent = "Ouvrir un outil ou filtrer le répertoire.";
+  }
+
+  renderDynamicCategoryNav();
+  renderCategoryAdmin();
+  render();
+  scheduleAutoSync(cat.hidden ? "catégorie masquée" : "catégorie affichée");
+  showToast(cat.hidden ? "Catégorie masquée de l’accueil." : "Catégorie de nouveau visible.");
+}
+
 function addCategory(){
   const name = prompt("Nom de la nouvelle catégorie :");
   if(!name || !name.trim()) return;
-  categories.push({id:makeCategoryId(name.trim()),name:name.trim()});
+  categories.push({id:makeCategoryId(name.trim()),name:name.trim(),hidden:false});
   saveJSON("portalCategories",categories);
   renderDynamicCategoryNav(); renderCategoryAdmin(); refreshCategorySelect(); render();
   scheduleAutoSync("catégorie ajoutée");
@@ -1345,7 +1383,7 @@ function openApp(app){
   window.open(url, "_blank", "noopener");
 }
 function updateStats(){
-  const active = apps.filter(a => a.enabled && !a.archived);
+  const active = apps.filter(a => a.enabled && !a.archived && !categories.find(c => c.id === a.category)?.hidden);
   document.getElementById("statApps").textContent = active.length;
   document.getElementById("statStable").textContent = active.filter(a => a.status === "stable").length;
   document.getElementById("statFav").textContent = favorites.filter(id => active.some(a => a.id === id)).length;
@@ -1681,7 +1719,7 @@ document.getElementById("importFile").addEventListener("change", async e => {
     const data = JSON.parse(await file.text());
     if(!Array.isArray(data.apps) || typeof data.settings !== "object") throw new Error();
     apps = data.apps;
-    categories = Array.isArray(data.categories) && data.categories.length ? data.categories : clone(DEFAULT_CATEGORIES);
+    categories = Array.isArray(data.categories) && data.categories.length ? data.categories.map(c => ({...c, hidden: !!c.hidden})) : clone(DEFAULT_CATEGORIES);
     settings = {...DEFAULT_SETTINGS, ...data.settings};
     favorites = Array.isArray(data.favorites) ? data.favorites : [];
     recents = Array.isArray(data.recents) ? data.recents : [];
@@ -1733,7 +1771,7 @@ async function reloadFromFirebase(showMsg = true){
     if(snap.exists()){
       const data = snap.data();
       if(Array.isArray(data.apps)) apps = data.apps;
-      if(Array.isArray(data.categories) && data.categories.length) categories = data.categories;
+      if(Array.isArray(data.categories) && data.categories.length) categories = data.categories.map(c => ({...c, hidden: !!c.hidden}));
       if(data.settings && typeof data.settings === "object") settings = {...DEFAULT_SETTINGS, ...data.settings};
       if(typeof data.codeHash === "string" && /^[a-f0-9]{64}$/i.test(data.codeHash)) localStorage.setItem("portalCodeHash", data.codeHash);
       saveJSON("portalApps", apps);
@@ -1778,7 +1816,7 @@ async function syncNow(showMsg = true, reason = ""){
       categories,
       codeHash: currentCodeHash(),
       updatedAt: serverTimestamp(),
-      appVersion: "V13-PRO-BROWSER-IDENTITY"
+      appVersion: "V14-PRO-CATEGORY-VISIBILITY"
     }, {merge:true});
 
     lastSyncSignature = signature;
