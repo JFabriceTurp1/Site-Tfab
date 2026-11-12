@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
 <meta name="theme-color" content="#0f172a">
-<title>Portail professionnel · Atelier pédagogique · V14</title>
+<title>Portail professionnel · Atelier pédagogique · V15</title>
 <link id="dynamicFavicon" rel="icon" href="">
 
 <style>
@@ -1118,14 +1118,19 @@ function applySettings(){
 }
 
 function filteredApps(){
+  const visibleCategoryIds = new Set(
+    categories.filter(c => !c.hidden).map(c => c.id)
+  );
+
   return apps.filter(app => {
     const archived = !!app.archived;
+
     if(navFilter === "archived"){
       if(!archived) return false;
     } else {
-      if(archived || !app.enabled) return false;
-      const category = categories.find(c => c.id === app.category);
-      if(category?.hidden) return false;
+      if(archived) return false;
+      if(!app.enabled) return false;
+      if(!visibleCategoryIds.has(app.category)) return false;
     }
 
     const matchNav =
@@ -1136,22 +1141,28 @@ function filteredApps(){
 
     const matchStatus = statusFilter === "all" ? true : app.status === statusFilter;
     const hay = (app.name+" "+app.description+" "+app.category+" "+app.version).toLowerCase();
-    return matchNav && matchStatus && hay.includes(query.toLowerCase());
+    const matchQuery = hay.includes(query.toLowerCase());
+
+    return matchNav && matchStatus && matchQuery;
   });
 }
 function groupedApps(items){
   if(navFilter === "archived") return [["archived", items]];
-  const order = categories.filter(c => !c.hidden).map(c => c.id);
-  const groups = {};
-  for(const id of order) groups[id] = [];
-  for(const app of items){
-    if(!groups[app.category]) groups[app.category] = [];
-    groups[app.category].push(app);
-  }
-  return [
-    ...order.filter(id => groups[id]?.length).map(id => [id, groups[id]]),
-    ...Object.keys(groups).filter(id => !order.includes(id) && groups[id]?.length).map(id => [id, groups[id]])
-  ];
+
+  const visibleCategories = categories.filter(c => !c.hidden);
+  const groups = new Map();
+
+  visibleCategories.forEach(cat => groups.set(cat.id, []));
+
+  items.forEach(app => {
+    if(groups.has(app.category)){
+      groups.get(app.category).push(app);
+    }
+  });
+
+  return visibleCategories
+    .map(cat => [cat.id, groups.get(cat.id)])
+    .filter(([, list]) => list.length > 0);
 }
 
 
@@ -1206,7 +1217,7 @@ function renderCategoryAdmin(){
         <small>${count} application${count>1?"s":""}</small>
       </div>
       <div class="archive-actions">
-        <button class="btn small" data-a="visibility">${cat.hidden ? "Afficher" : "Masquer"}</button>
+        <button class="btn small ${cat.hidden ? "success" : ""}" data-a="visibility">${cat.hidden ? "Réafficher" : "Masquer"}</button>
         <button class="btn small" data-a="up">↑</button>
         <button class="btn small" data-a="down">↓</button>
         <button class="btn small" data-a="rename">Renommer</button>
@@ -1229,18 +1240,20 @@ function toggleCategoryVisibility(id){
 
   if(cat.hidden && navFilter === id){
     navFilter = "all";
-    document.querySelectorAll(".nav-btn").forEach(b => b.classList.remove("active"));
-    const allBtn = document.querySelector('.nav-btn[data-filter="all"]');
-    if(allBtn) allBtn.classList.add("active");
+  }
+
+  renderDynamicCategoryNav();
+  renderCategoryAdmin();
+  render();
+
+  // Ensure home title is consistent after hiding current category
+  if(navFilter === "all"){
     const title = document.getElementById("sectionTitle");
     const subtitle = document.getElementById("sectionSubtitle");
     if(title) title.textContent = "Applications";
     if(subtitle) subtitle.textContent = "Ouvrir un outil ou filtrer le répertoire.";
   }
 
-  renderDynamicCategoryNav();
-  renderCategoryAdmin();
-  render();
   scheduleAutoSync(cat.hidden ? "catégorie masquée" : "catégorie affichée");
   showToast(cat.hidden ? "Catégorie masquée de l’accueil." : "Catégorie de nouveau visible.");
 }
@@ -1816,7 +1829,7 @@ async function syncNow(showMsg = true, reason = ""){
       categories,
       codeHash: currentCodeHash(),
       updatedAt: serverTimestamp(),
-      appVersion: "V14-PRO-CATEGORY-VISIBILITY"
+      appVersion: "V15-PRO-CATEGORY-HIDE-FIX"
     }, {merge:true});
 
     lastSyncSignature = signature;
